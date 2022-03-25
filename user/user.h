@@ -2,16 +2,16 @@ struct stat;
 struct rtcdate;
 
 // system calls
-int fork(void);
+int fork(void);  //返回值为负数表示失败
 int exit(int) __attribute__((noreturn));
 int wait(int*);
-int pipe(int*);
+int pipe(int*); //参数是一个两个int类型的数组,返回值为负数表示创建失败
 int write(int, const void*, int);
 int read(int, void*, int);
 int close(int);
 int kill(int);
 int exec(char*, char**);
-int open(const char*, int);
+int open(const char*, int);     //打开名称为第一个参数的文件,返回文件描述符
 int mknod(const char*, short, short);
 int unlink(const char*);
 int fstat(int fd, struct stat*);

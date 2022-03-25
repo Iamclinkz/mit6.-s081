@@ -75,6 +75,7 @@ runcmd(struct cmd *cmd)
     ecmd = (struct execcmd*)cmd;
     if(ecmd->argv[0] == 0)
       exit(1);
+    //执行exec,如果没出问题,在exec中直接exit,如果出了问题,会返回+打印错误
     exec(ecmd->argv[0], ecmd->argv);
     fprintf(2, "exec %s failed\n", ecmd->argv[0]);
     break;
@@ -98,22 +99,26 @@ runcmd(struct cmd *cmd)
     break;
 
   case PIPE:
+    //如果是管道指令
     pcmd = (struct pipecmd*)cmd;
     if(pipe(p) < 0)
+    //如果分配不了管道,panic
       panic("pipe");
     if(fork1() == 0){
-      close(1);
-      dup(p[1]);
-      close(p[0]);
-      close(p[1]);
-      runcmd(pcmd->left);
+      //如果是子进程
+      close(1);       //关闭标准输出,这是为了使用dep后将标准输出重定向到管道的写端
+      //dup作用:用dup函数时，内核在进程中创建一个新的文件描述符，此描述符是当前可用文件描述符的最小数值，这个文件描述符指向oldfd所拥有的文件表项。
+      dup(p[1]);        //使用dep,将标准输出重定向到管道的写端
+      close(p[0]);      //关闭管道读的文件描述符
+      close(p[1]);      //关闭管道写的文件描述符
+      runcmd(pcmd->left); //递归执行管道左边的指令
     }
     if(fork1() == 0){
-      close(0);
-      dup(p[0]);
-      close(p[0]);
+      close(0);       //关闭标准输入
+      dup(p[0]);      //使用dup,让标准输入重定向到管道的读端
+      close(p[0]);    
       close(p[1]);
-      runcmd(pcmd->right);
+      runcmd(pcmd->right);  //递归执行管道右边的指令
     }
     close(p[0]);
     close(p[1]);

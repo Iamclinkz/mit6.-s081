@@ -239,6 +239,8 @@ iupdate(struct inode *ip)
 // Find the inode with number inum on device dev
 // and return the in-memory copy. Does not lock
 // the inode and does not read it from disk.
+
+//在设备dev上找到编号为inum的inode，并返回内存中的副本。不会锁定inode，也不会从磁盘读取它。
 static struct inode*
 iget(uint dev, uint inum)
 {
@@ -628,7 +630,7 @@ namex(char *path, int nameiparent, char *name)
   struct inode *ip, *next;
 
   if(*path == '/')
-    ip = iget(ROOTDEV, ROOTINO);
+    ip = iget(ROOTDEV, ROOTINO);    
   else
     ip = idup(myproc()->cwd);
 

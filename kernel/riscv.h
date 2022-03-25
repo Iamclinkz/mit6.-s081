@@ -271,7 +271,7 @@ intr_off()
   w_sstatus(r_sstatus() & ~SSTATUS_SIE);
 }
 
-// are device interrupts enabled?
+// are device interrupts enabled?如果当前中断开着,返回1,中断没开,返回0
 static inline int
 intr_get()
 {

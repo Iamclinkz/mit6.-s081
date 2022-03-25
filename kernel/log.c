@@ -41,7 +41,7 @@ struct log {
   struct spinlock lock;
   int start;
   int size;
-  int outstanding; // how many FS sys calls are executing.
+  int outstanding; // how many FS sys calls are executing.这里翻译为"未完成的"
   int committing;  // in commit(), please wait.
   int dev;
   struct logheader lh;
@@ -125,7 +125,7 @@ recover_from_log(void)
 void
 begin_op(void)
 {
-  acquire(&log.lock);
+  acquire(&log.lock);     //自旋锁,上锁
   while(1){
     if(log.committing){
       sleep(&log, &log.lock);
@@ -133,7 +133,7 @@ begin_op(void)
       // this op might exhaust log space; wait for commit.
       sleep(&log, &log.lock);
     } else {
-      log.outstanding += 1;
+      log.outstanding += 1; //log等待的事件+1
       release(&log.lock);
       break;
     }

@@ -4,6 +4,7 @@
 
 char buf[512];
 
+//输出文件描述符为fd,名称为name的文件中的段落数,单词数,字节数
 void
 wc(int fd, char *name)
 {

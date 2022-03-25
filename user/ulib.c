@@ -70,16 +70,17 @@ gets(char *buf, int max)
   return buf;
 }
 
+//通过名称获取inode节点,并赋值给st
 int
 stat(const char *n, struct stat *st)
 {
   int fd;
   int r;
 
-  fd = open(n, O_RDONLY);
+  fd = open(n, O_RDONLY);   //通过名称打开文件,获取文件描述符
   if(fd < 0)
-    return -1;
-  r = fstat(fd, st);
+    return -1;              //如果打开不成功返回-1
+  r = fstat(fd, st);        //通过文件描述符获取inode节点,赋值给st结构
   close(fd);
   return r;
 }
@@ -95,6 +96,7 @@ atoi(const char *s)
   return n;
 }
 
+//memmove 将vsrc开始的n个byte移动到vdst所在的位置上
 void*
 memmove(void *vdst, const void *vsrc, int n)
 {
@@ -104,15 +106,17 @@ memmove(void *vdst, const void *vsrc, int n)
   dst = vdst;
   src = vsrc;
   if (src > dst) {
+    //如果src比较高的话,正常的移动不会有问题,所以一个字节一个字节的移动即可
     while(n-- > 0)
       *dst++ = *src++;
   } else {
+    //如果dst比较高的话,万一src+n > dst,则会出问题.所以应该从高向低移动
     dst += n;
     src += n;
     while(n-- > 0)
       *--dst = *--src;
   }
-  return vdst;
+  return vdst;  //返回移动后的地址
 }
 
 int

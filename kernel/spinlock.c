@@ -21,7 +21,10 @@ initlock(struct spinlock *lk, char *name)
 void
 acquire(struct spinlock *lk)
 {
+  //中断一手
   push_off(); // disable interrupts to avoid deadlock.
+
+  //如果当前已经获得了锁,panic
   if(holding(lk))
     panic("acquire");
 
@@ -30,7 +33,7 @@ acquire(struct spinlock *lk)
   //   s1 = &lk->locked
   //   amoswap.w.aq a5, a5, (s1)
   while(__sync_lock_test_and_set(&lk->locked, 1) != 0)
-    ;
+    ;//自旋一手
 
   // Tell the C compiler and the processor to not move loads or stores
   // past this point, to ensure that the critical section's memory
@@ -84,27 +87,34 @@ holding(struct spinlock *lk)
 // push_off/pop_off are like intr_off()/intr_on() except that they are matched:
 // it takes two pop_off()s to undo two push_off()s.  Also, if interrupts
 // are initially off, then push_off, pop_off leaves them off.
+//用栈来模拟了关中断和开中断的操作.上面的话细品.
 
+//相当于关中断操作
 void
 push_off(void)
 {
-  int old = intr_get();
+  int old = intr_get();     //获取当前是否中断
 
-  intr_off();
+  intr_off();             //直接改标志寄存器的值,实际的执行关设备中断
   if(mycpu()->noff == 0)
+  //如果当前cpu没有记录中断,那么将其置为中断进行中
     mycpu()->intena = old;
   mycpu()->noff += 1;
 }
 
+//相当于开中断操作
 void
 pop_off(void)
 {
   struct cpu *c = mycpu();
   if(intr_get())
+    //如果当前开着中断,执行关中断操作的话会panic
     panic("pop_off - interruptible");
   if(c->noff < 1)
+    //如果当前cpu没有记录正在中断中,panic
     panic("pop_off");
   c->noff -= 1;
   if(c->noff == 0 && c->intena)
+    //如果当前栈中的中断请求都pop_off了,并且在第一个中断之前中断是开着的,那么重新开中断
     intr_on();
 }
