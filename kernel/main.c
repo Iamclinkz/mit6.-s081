@@ -28,7 +28,7 @@ main()
     iinit();         // inode cache
     fileinit();      // file table
     virtio_disk_init(); // emulated hard disk
-    userinit();      // first user process
+    userinit();      // 创建第一个进程,执行一个用RISC-V汇编语言编写的小程序initcode.S
     __sync_synchronize();
     started = 1;
   } else {

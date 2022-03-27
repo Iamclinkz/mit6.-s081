@@ -79,10 +79,10 @@ struct trapframe {
   /* 272 */ uint64 t5;
   /* 280 */ uint64 t6;
 };
-
+//                已分配?  睡眠(等待io) 准备运行 正在运行 被杀死
 enum procstate { UNUSED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
-// Per-process state
+// 用于表示进程的数据结构
 struct proc {
   struct spinlock lock;
 
@@ -94,10 +94,12 @@ struct proc {
   int xstate;                  // Exit status to be returned to parent's wait
   int pid;                     // Process ID
 
+  int traceMark;               //用于trace的掩码
+
   // these are private to the process, so p->lock need not be held.
-  uint64 kstack;               // Virtual address of kernel stack
+  uint64 kstack;               // Virtual address of kernel stack,即内核堆栈的虚拟地址
   uint64 sz;                   // Size of process memory (bytes)
-  pagetable_t pagetable;       // User page table
+  pagetable_t pagetable;       // 用户态的页表,以符合risc-v硬件的格式存储进程的页表
   struct trapframe *trapframe; // data page for trampoline.S
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files

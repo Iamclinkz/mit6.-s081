@@ -1,3 +1,4 @@
+//各种寄存器作用可以见42页
 // which hart (core) is this?
 static inline uint64
 r_mhartid()
@@ -31,7 +32,7 @@ w_mstatus(uint64 x)
 
 // machine exception program counter, holds the
 // instruction address to which a return from
-// exception will go.
+// exception will go.(异常返回地址)
 static inline void 
 w_mepc(uint64 x)
 {
@@ -46,6 +47,8 @@ w_mepc(uint64 x)
 #define SSTATUS_SIE (1L << 1)  // Supervisor Interrupt Enable
 #define SSTATUS_UIE (1L << 0)  // User Interrupt Enable
 
+//sstatus中的SIE位控制是否启用设备中断。如果内核清除SIE，RISC-V将推迟设备中断，
+//直到内核设置SIE。SPP位指示陷阱是来自用户模式还是主管模式，并控制sret返回的模式。
 static inline uint64
 r_sstatus()
 {
@@ -114,12 +117,15 @@ w_mie(uint64 x)
 // machine exception program counter, holds the
 // instruction address to which a return from
 // exception will go.
+//
 static inline void 
 w_sepc(uint64 x)
 {
   asm volatile("csrw sepc, %0" : : "r" (x));
 }
 
+//出现陷阱时，RISC-V会将程序计数器保存在此处（因为pc随后会被stvec覆盖）。
+//sret（从陷阱返回）指令将sepc复制到pc。内核可以写入sepc以控制sret的去向。 
 static inline uint64
 r_sepc()
 {
@@ -166,6 +172,7 @@ w_stvec(uint64 x)
   asm volatile("csrw stvec, %0" : : "r" (x));
 }
 
+//stvec:存放trap处理函数的地址
 static inline uint64
 r_stvec()
 {
@@ -215,6 +222,7 @@ w_mscratch(uint64 x)
   asm volatile("csrw mscratch, %0" : : "r" (x));
 }
 
+//写入一个代表trap原因的数字
 // Supervisor Trap Cause
 static inline uint64
 r_scause()
@@ -257,7 +265,7 @@ r_time()
   return x;
 }
 
-// enable device interrupts
+// enable device interrupts 允许设备中断
 static inline void
 intr_on()
 {
@@ -348,7 +356,7 @@ sfence_vma()
 // MAXVA is actually one bit less than the max allowed by
 // Sv39, to avoid having to sign-extend virtual addresses
 // that have the high bit set.
-#define MAXVA (1L << (9 + 9 + 9 + 12 - 1))
+#define MAXVA (1L << (9 + 9 + 9 + 12 - 1))    //2^38,逻辑地址的最大值
 
 typedef uint64 pte_t;
 typedef uint64 *pagetable_t; // 512 PTEs
