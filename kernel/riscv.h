@@ -323,15 +323,17 @@ sfence_vma()
 #define PGSIZE 4096 // bytes per page
 #define PGSHIFT 12  // bits of offset within a page
 
-#define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
-#define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))
+#define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))    //PGROUNDUP(111) = 4096
+#define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))      //例如PGROUNDDOWN(4097) = 4096
 
-#define PTE_V (1L << 0) // valid
-#define PTE_R (1L << 1)
-#define PTE_W (1L << 2)
-#define PTE_X (1L << 3)
+//页表有关项
+#define PTE_V (1L << 0) // valid    页表有效位
+#define PTE_R (1L << 1) //是否可读
+#define PTE_W (1L << 2) //是否可写
+#define PTE_X (1L << 3) //是否可执行
 #define PTE_U (1L << 4) // 1 -> user can access
 
+//相当于以4字节为单位,并且让最低的12位为0
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)
 
@@ -350,5 +352,7 @@ sfence_vma()
 // that have the high bit set.
 #define MAXVA (1L << (9 + 9 + 9 + 12 - 1))
 
+//
 typedef uint64 pte_t;
+//pagetable_t代码实现是指向uint64的一个指针.可以指向内核页表,也可以指向pre proc中的页表
 typedef uint64 *pagetable_t; // 512 PTEs
