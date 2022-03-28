@@ -39,13 +39,16 @@ void kvminit()
   kvmmap(PLIC, PLIC, 0x400000, PTE_R | PTE_W);
 
   // map kernel text executable and read-only.
+  //映射从内核开始到内核结束这段内核空间
   kvmmap(KERNBASE, KERNBASE, (uint64)etext - KERNBASE, PTE_R | PTE_X);
 
   // map kernel data and the physical RAM we'll make use of.
+  //映射从内核结束到PHYSTOP这段空间,因为是1->1映射的,所以相当于内核页表中,逻辑地址的最大值也是PHYSTOP
   kvmmap((uint64)etext, (uint64)etext, PHYSTOP - (uint64)etext, PTE_R | PTE_W);
 
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
+  //映射TRAMPOLINE
   kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 }
 
@@ -111,6 +114,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
 // Look up a virtual address, return the physical address,
 // or 0 if not mapped.
 // Can only be used to look up user pages.
+//只能用于遍历用户页表,进行逻辑地址到物理地址的映射
 uint64
 walkaddr(pagetable_t pagetable, uint64 va)
 {
@@ -164,17 +168,18 @@ kvmpa(uint64 va)
 // physical addresses starting at pa. va and size might not
 // be page-aligned. Returns 0 on success, -1 if walk() couldn't
 // allocate a needed page-table page.
-//通过添加页表项的方式,将虚拟地址和物理地址通过页表进行映射
+//通过添加页表项的方式,将虚拟地址和物理地址通过页表进行映射,不会实际的分配物理内存
 int mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 {
   uint64 a, last;
   pte_t *pte;
 
-  a = PGROUNDDOWN(va);
-  last = PGROUNDDOWN(va + size - 1);
+  a = PGROUNDDOWN(va);                  //a记录了va的页的起始地址
+  last = PGROUNDDOWN(va + size - 1);    //last记录了va的页的结束地址
   for (;;)
   {
-    //如果walk返回0,说明没法分配(系统错误),返回-1
+    //如果walk返回0,说明没法分配次级页表(系统错误),返回-1,如果返回的不是1,那么返回的是一个指向页表项的指针
+    //可以将这个页表项进行初始化
     if ((pte = walk(pagetable, a, 1)) == 0)
       return -1;
     if (*pte & PTE_V)
@@ -182,6 +187,7 @@ int mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
       //如果有效,那么报错.
       panic("remap");
     //初始化页表值
+          //物理地址    uxrw值  设置可用    
     *pte = PA2PTE(pa) | perm | PTE_V;
     if (a == last)
       break;
@@ -200,18 +206,23 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   pte_t *pte;
 
   if ((va % PGSIZE) != 0)
+    //判断是否边界对齐
     panic("uvmunmap: not aligned");
 
   for (a = va; a < va + npages * PGSIZE; a += PGSIZE)
   {
+    //从va开始,一直走npages个页
     if ((pte = walk(pagetable, a, 0)) == 0)
+      //判断这个页的高级页表的页表项是否有效,注意walk的alloc位为0,如果没有分配页表,那么直接返回0
       panic("uvmunmap: walk");
     if ((*pte & PTE_V) == 0)
+      //判断该页的页表项是否有效
       panic("uvmunmap: not mapped");
     if (PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if (do_free)
     {
+      //如果do_free设置为1,那么顺便也调用kfree,把物理内存给释放了
       uint64 pa = PTE2PA(*pte);
       kfree((void *)pa);
     }
@@ -221,6 +232,7 @@ void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
 // create an empty user page table.
 // returns 0 if out of memory.
+//创建一个空的页表,并且将页表物理地址返回
 pagetable_t
 uvmcreate()
 {
@@ -249,6 +261,7 @@ void uvminit(pagetable_t pagetable, uchar *src, uint sz)
 
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
+//从用户的虚拟地址oldsz一直到newsz之间使用kalloc分配整页整页的内存,并且将其加入对应进程的页表中
 uint64
 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 {
@@ -256,20 +269,27 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
   uint64 a;
 
   if (newsz < oldsz)
+  //如果新地址不如旧地址高,直接返回旧地址
     return oldsz;
 
   oldsz = PGROUNDUP(oldsz);
   for (a = oldsz; a < newsz; a += PGSIZE)
   {
-    mem = kalloc();
+    //从新地址到旧地址,每次大小为一页
+    mem = kalloc();   //分配一个新的物理内存
     if (mem == 0)
     {
+      //如果内存不够,return
       uvmdealloc(pagetable, a, oldsz);
       return 0;
     }
+    //初始化这个物理页的所有东西为0
     memset(mem, 0, PGSIZE);
+    
+    //将这个申请到的物理页进行映射,从虚拟地址a -> 物理地址men,并且设置对应的标志位
     if (mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_W | PTE_X | PTE_R | PTE_U) != 0)
     {
+      //如果分配不成功,那么uvmdealloc
       kfree(mem);
       uvmdealloc(pagetable, a, oldsz);
       return 0;
@@ -282,6 +302,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 // newsz.  oldsz and newsz need not be page-aligned, nor does newsz
 // need to be less than oldsz.  oldsz can be larger than the actual
 // process size.  Returns the new process size.
+//从oldsz到newsz(如果oldsz比newsz大才有效)之间的内存进行归还,并且
 uint64
 uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 {
@@ -290,7 +311,9 @@ uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 
   if (PGROUNDUP(newsz) < PGROUNDUP(oldsz))
   {
+    //计算从newsz到oldsz一共是多少页
     int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+    //使用uvmunmap进行释放,do_free是1,说明同时执行物理内存的归还
     uvmunmap(pagetable, PGROUNDUP(newsz), npages, 1);
   }
 

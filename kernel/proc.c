@@ -89,6 +89,8 @@ allocpid() {
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
 // If there are no free procs, or a memory allocation fails, return 0.
+//遍历proc链表,找到一个UNUSED的proc,然后给其分配一页物理内存作为trapframe,并且初始化其页表
+//(具体操作是初始化顶级页表,然后初始化trapframe和trampoline这两个页的页表项)
 static struct proc*
 allocproc(void)
 {
@@ -154,27 +156,33 @@ freeproc(struct proc *p)
 
 // Create a user page table for a given process,
 // with no user memory, but with trampoline pages.
+//创建一个拥有trampoline和trapframe这两个映射的页表
 pagetable_t
 proc_pagetable(struct proc *p)
 {
   pagetable_t pagetable;
 
-  // An empty page table.
+  // 创建一个空的页表
   pagetable = uvmcreate();
   if(pagetable == 0)
     return 0;
 
+  //这里可以通过lab3.1打印结果看出,其中最下面两条打印的结果就分别是trampoline和trapframe
   // map the trampoline code (for system call return)
   // at the highest user virtual address.
   // only the supervisor uses it, on the way
   // to/from user space, so not PTE_U.
+  //进行TRAMPOLINE的映射,TRAMPOLINE的逻辑地址在VA的最上面,物理地址在固定的位置,
+  //通过trampoline.S后期定位
   if(mappages(pagetable, TRAMPOLINE, PGSIZE,
               (uint64)trampoline, PTE_R | PTE_X) < 0){
+    //TRAMPOLINE是VA的最上方的一个页
     uvmfree(pagetable, 0);
     return 0;
   }
 
   // map the trapframe just below TRAMPOLINE, for trampoline.S.
+  //进行TRAPFRAME的映射,TRAPFLAME物理地址在p中有记录,逻辑地址在TRAMPOLINE的下面一个页
   if(mappages(pagetable, TRAPFRAME, PGSIZE,
               (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
@@ -235,18 +243,21 @@ userinit(void)
 
 // Grow or shrink user memory by n bytes.
 // Return 0 on success, -1 on failure.
+//
 int
 growproc(int n)
 {
   uint sz;
   struct proc *p = myproc();
 
-  sz = p->sz;
+  sz = p->sz;     //从p中取出当前程序的大小
   if(n > 0){
+    //如果n>0,那么申请物理内存
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
   } else if(n < 0){
+    //如果n<0,那么删除物理内存
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   p->sz = sz;
@@ -259,8 +270,8 @@ int
 fork(void)
 {
   int i, pid;
-  struct proc *np;
-  struct proc *p = myproc();
+  struct proc *np;                //np指向的是子进程的proc
+  struct proc *p = myproc();      //p指向的是父进程的proc
 
   // Allocate process.
   if((np = allocproc()) == 0){
