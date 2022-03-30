@@ -136,6 +136,11 @@ exec(char *path, char **argv)
   p->trapframe->sp = sp; // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
 
+  //lab3.3将用户页表的映射,添加用户内核页表中
+  if(copyUPT2UKPT(p->pagetable, p->kernelPageTable,0, sz) < 0){
+    goto bad;
+  }
+  
   //lab3.1
   if(p->pid==1) 
     vmprint(p->pagetable);
