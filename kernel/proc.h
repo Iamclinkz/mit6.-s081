@@ -102,5 +102,12 @@ struct proc {
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
-  char name[16];               // Process name (debugging)
+  char name[16];               // Process name (debugging
+
+  //lab4.3
+  int ticks;          //报警间隔
+  int currentTicks;   //当前还有几秒到0 0的话会报警
+  void (*handler)();  //回调函数
+  int ticking;        //当前是否正在执行定时函数
+  struct trapframe tickTrapframe;
 };

@@ -29,6 +29,17 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+
+//lab4.3,将当前的trapframe进行保存,保存至p->tickTrapframe中
+void
+tickSave()
+{
+  struct proc *p = myproc();
+  memmove(&p->tickTrapframe,p->trapframe,sizeof(p->tickTrapframe));
+}
+
+
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -91,8 +102,22 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if(which_dev == 2){
+    //lab4.3
+    if(p->ticks && !p->ticking){
+      //如果当前进程设置了定时事件
+      if(p->currentTicks){
+        p->currentTicks--;
+      }else{
+        p->ticking = 1;
+        tickSave();
+        p->currentTicks = p->ticks;
+        p->trapframe->epc = (uint64)p->handler;
+        usertrapret();
+      }
+    }
     yield();
+  }
 
   //由于是从汇编代码中直接jump指令而不是call指令过来的,所以usertrap()结束后并不返回uservec中,而是调用usertrapret返回
   usertrapret();

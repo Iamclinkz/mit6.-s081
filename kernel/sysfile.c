@@ -484,3 +484,29 @@ sys_pipe(void)
   }
   return 0;
 }
+
+//lab4.3
+uint64
+sys_sigalarm(void)
+{
+  uint64 ticks,handler;
+  struct proc *p = myproc();
+  if(argaddr(0, &ticks) < 0)
+    return -1;
+  if(argaddr(1, &handler) < 0)
+    return -1;
+  p->ticks = ticks;
+  p->currentTicks = ticks;
+  p->handler = (void (*)())handler;
+  return 0;
+}
+
+//lab4.3,将当前的p->tickTrapframe加载到trapframe中
+uint64
+sys_sigreturn(void)
+{
+  struct proc *p = myproc();
+  p->ticking = 0;
+  memmove(p->trapframe,&p->tickTrapframe,sizeof(p->tickTrapframe));
+  return p->trapframe->a0;
+}
