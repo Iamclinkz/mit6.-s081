@@ -132,3 +132,25 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+
+//lab4.2 打印当前(执行backtrace时)的内核堆栈的函数调用情况
+//例如进入内核之后,有a().11行->b->().11行->backtrace(),那么会打印
+//a().11行中对应的汇编指令call的下一条指令
+//b().11行中对应的汇编指令call的下一条指令
+void 
+backtrace(void)
+{
+  printf("%s\n","backtrace:");
+  //通过执行backtrace()时的s0寄存器的值,获取调用backtrace的函数的fp
+  uint64 fp = r_fp();
+  //while的终止条件应该是到达内核堆栈的第一个函数,这个函数的fp应该正好是
+  //内核堆栈的PGROUNDUP,例如内核堆栈是0~4095,那么这个fp应该是4096
+  while(PGROUNDUP(fp) != fp)
+  {
+    //打印fp往下8个单位的内容,也就是ret addr
+    printf("%p\n",*((uint64*)(fp-8)));
+    //让fp迭代,即转到调用上一个函数的函数的fp
+    fp = *((uint64*)(fp-16));
+  }
+}

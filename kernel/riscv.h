@@ -40,7 +40,7 @@ w_mepc(uint64 x)
 
 // Supervisor Status Register, sstatus
 
-#define SSTATUS_SPP (1L << 8)  // Previous mode, 1=Supervisor, 0=User
+#define SSTATUS_SPP (1L << 8)  // 当前的中断发生时是处于用户mode还是supervisor mode.1=Supervisor, 0=User
 #define SSTATUS_SPIE (1L << 5) // Supervisor Previous Interrupt Enable
 #define SSTATUS_UPIE (1L << 4) // User Previous Interrupt Enable
 #define SSTATUS_SIE (1L << 1)  // Supervisor Interrupt Enable
@@ -114,6 +114,8 @@ w_mie(uint64 x)
 // machine exception program counter, holds the
 // instruction address to which a return from
 // exception will go.
+//出现陷阱时，RISC-V会将程序计数器保存在此处（因为pc随后会被stvec覆盖）。
+//sret（从陷阱返回）指令将sepc复制到pc。内核可以写入sepc以控制sret的去向。 
 static inline void 
 w_sepc(uint64 x)
 {
@@ -160,6 +162,7 @@ w_mideleg(uint64 x)
 
 // Supervisor Trap-Vector Base Address
 // low two bits are mode.
+//stvec:内核在这里写入陷阱处理程序的地址；RISC-V跳到这里来处理陷阱。
 static inline void 
 w_stvec(uint64 x)
 {
@@ -203,6 +206,7 @@ r_satp()
 }
 
 // Supervisor Scratch register, for early trap handler in trampoline.S.
+//内核在这里放置一个值，该值在陷阱处理程序的一开始就很有用。 
 static inline void 
 w_sscratch(uint64 x)
 {
@@ -216,6 +220,7 @@ w_mscratch(uint64 x)
 }
 
 // Supervisor Trap Cause
+//RISC-V在这里输入一个数字，描述陷阱的原因。 
 static inline uint64
 r_scause()
 {
@@ -258,6 +263,8 @@ r_time()
 }
 
 // enable device interrupts
+//sstatus中的SIE位控制是否启用设备中断。如果内核清除SIE，RISC-V将推迟设备中断，直到内核设置SIE。
+//SPP位指示发生陷阱时是用户模式还是主管模式，以及控制sret返回的模式。 
 static inline void
 intr_on()
 {
@@ -352,3 +359,12 @@ sfence_vma()
 
 typedef uint64 pte_t;
 typedef uint64 *pagetable_t; // 512 PTEs
+
+//lab4.2 读取当前的s0寄存器,其中保存着当前函数的调用堆栈的fp指针(即栈底指针(aka地址较高的指针))
+static inline uint64
+r_fp()
+{
+  uint64 x;
+  asm volatile("mv %0, s0" : "=r" (x) );
+  return x;
+}

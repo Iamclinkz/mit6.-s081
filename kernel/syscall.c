@@ -135,8 +135,12 @@ syscall(void)
   int num;
   struct proc *p = myproc();
 
+  //如果是系统调用,那么在a7中存放着系统调用号,取出并调用对应的系统调用
   num = p->trapframe->a7;
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+    //每一个系统调用最后都会返回一个uint64的值,把这个值最后再写入到trapframe中的a0中,方便userret最后
+    //再在返回的时候放到a0寄存器中
+    //代码执行到这里,其中例如write()系统调用,a0,a1,a2分别存放了其三个参数
     p->trapframe->a0 = syscalls[num]();
   } else {
     printf("%d %s: unknown sys call %d\n",
