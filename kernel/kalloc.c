@@ -23,11 +23,39 @@ struct {
   struct run *freelist;
 } kmem;
 
+//lab6 
+char kmemref[32730];
+
+//getKmemrefIdx 把物理地址转换成kmemref的下标
+int getKmemrefIdx(uint64 kmemAddr)
+{
+  return (kmemAddr - (uint64)end) / PGSIZE;
+}
+
+int getref(uint64 kmemAddr)
+{
+  return kmemref[getKmemrefIdx(kmemAddr)];
+}
+
+//addref 增加(当num为正时)/减少(num为负时)计数,返回更改之后的计数
+int addref(uint64 kmemAddr,int num)
+{
+  int idx = getKmemrefIdx(kmemAddr);
+  kmemref[idx] = kmemref[idx] + num;
+  if(kmemref[idx]<0){
+    panic("kmemref should not be negative");
+  }else{
+    return kmemref[idx];
+  }
+}
+
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
   freerange(end, (void*)PHYSTOP);
+  //uint64 kend = (uint64)end;
+  //printf("kend:%p,phystop:%p,sub:%p,num of pages:%d,rest:%d\n",kend,PHYSTOP,PHYSTOP-kend,(PHYSTOP-kend)/4096,(PHYSTOP-kend)%4096);
 }
 
 void
@@ -50,6 +78,11 @@ kfree(void *pa)
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
+
+  //lab6 删除的时候减少引用计数,如果引用计数为0,才进行删除
+  char ref = addref((uint64)pa,-1);
+  if(ref != 0)
+    return;
 
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
@@ -78,5 +111,10 @@ kalloc(void)
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
+  
+  //lab6
+  if(addref((uint64)r,1)!=1){
+    panic("kalloc:addref ret should be 1");
+  }
   return (void*)r;
 }

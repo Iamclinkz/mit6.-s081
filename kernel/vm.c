@@ -311,7 +311,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  //char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -319,12 +319,22 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+
+    //将flags的写位去掉
+    *pte = *pte & (~PTE_W);
+    //将flags的第一个RSW位设为1,用于标记这是一个共享页,让出现页错误时诊断
+    *pte = *pte | PTE_RSW1;   
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    addref(pa,1);
+    
+    // if((mem = kalloc()) == 0)
+    //   goto err;
+    //lab6 取消分配物理内存,而是将父进程的对应页表项置为不能写,然后引用计数+1
+    //memmove(mem, (char*)pa, PGSIZE);
+
+    //将父进程的pte对应的物理内存页多映射到子进程的相同逻辑地址对应的页表项中
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
+      addref(pa,-1);
       goto err;
     }
   }
@@ -351,16 +361,46 @@ uvmclear(pagetable_t pagetable, uint64 va)
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
+//从内核页表地址src拷贝到用户pagetable页表,逻辑地址为dstva的位置上
 int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
 
   while(len > 0){
-    va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
+    va0 = PGROUNDDOWN(dstva);         //用户页的down
+    pa0 = walkaddr(pagetable, va0);   //通过pagetable找到当前va0对应的物理地址
     if(pa0 == 0)
+      //如果用户的逻辑地址不合法,那么return -1
       return -1;
+
+    //lab6 如果当前的物理地址同时被好几个ref引用,那么分配物理内存,从新映射页表
+    pte_t* pte = walk(pagetable,va0,0); //取出页表项
+    if(pte == 0 || !(*pte & PTE_V)){
+      return -1;
+    }
+    if(*pte & PTE_RSW1){
+      //如果当前的页表项说明当前的物理页是共享页
+      if(getref(pa0) == 1){
+          //如果当前只有一个页表引用当前物理页,那么改变这个物理页对应的页表项
+          *pte =*pte & (~PTE_RSW1);    //这个页已经不是共享页了,而是本进程独享
+          *pte =*pte | (~PTE_W);       //本进程可以对这个页写了
+        }else{
+          //分配一个新的页,然后让当前页表项映射到新的物理页上
+          addref(pa0,-1);      //老的pa的ref-1
+          uint64 newpa = (uint64)kalloc();
+          if(newpa == 0){
+            return -1;
+          }else{
+            if(mappages(pagetable,va0,PGSIZE,newpa,PTE_W|PTE_U|PTE_R) != 0){
+              kfree((void*)newpa);
+              return -1;
+            }
+            memmove((void*)newpa,(void *)pa0,PGSIZE);
+          }
+        }
+    }
+
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;

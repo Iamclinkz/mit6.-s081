@@ -67,6 +67,34 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(r_scause() == 15){
+      //lab6 如果是store指令造成的trap,那么应该查看是不是访问到了共享页
+      uint64 va = r_stval();    //va指向出错的地址
+      pte_t *pte;
+      if((pte = walk(p->pagetable,va,0)) == 0|| !(*pte & PTE_V) || !(*pte & PTE_RSW1)){
+        //如果根本就没有这个页,或者这个页的共享位为0,或者这个页的有效位为0,那么指令非法
+        p->killed = 1;
+      }else{
+        //如果当前页的引用实际上为1,那么不用创建新的页了,把当前页的w给打开就行了
+        uint64 pa = PTE2PA(*pte);
+        if(getref(pa) == 1){
+          *pte =*pte & (~PTE_RSW1);    //这个页已经不是共享页了,而是本进程独享
+          *pte =*pte | (~PTE_W);       //本进程可以对这个页写了
+        }else{
+          //分配一个新的页,然后让当前页表项映射到新的物理页上
+          addref(pa,-1);      //老的pa的ref-1
+          uint64 newpa = (uint64)kalloc();
+          if(newpa == 0){
+            p->killed = 1;
+          }else{
+            if(mappages(p->pagetable,va,PGSIZE,newpa,PTE_W|PTE_U|PTE_R) != 0){
+              kfree((void*)newpa);
+              p->killed = 1;
+            }
+            memmove((void*)newpa,(void*)pa,PGSIZE);
+          }
+        }
+      }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
