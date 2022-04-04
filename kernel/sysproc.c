@@ -47,8 +47,14 @@ sys_sbrk(void)
   if(argint(0, &n) < 0)
     return -1;
   addr = myproc()->sz;
-  if(growproc(n) < 0)
-    return -1;
+  
+  //lab5.1不直接分配物理内存,而是将用户的sz改一手
+  if(n > 0){
+    myproc()->sz = myproc()->sz + n;
+  }else{
+    if(growproc(n) < 0)
+      return -1;
+  }
   return addr;
 }
 

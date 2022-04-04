@@ -67,7 +67,25 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  }else if(r_scause() == 15 || r_scause() == 13){
+    if(r_stval() < p->sz && r_stval() >= PGROUNDUP(p->trapframe->sp)){
+      //说明没有越界,只不过是lazy allocation的原因,没有实际的分配物理页
+      uint64 va = r_stval();
+      uint64 ka = (uint64)kalloc();
+      if(ka == 0){
+        p->killed = 1;
+      }else{
+        memset((void*)ka,0,PGSIZE);
+        va = PGROUNDDOWN(va);
+        if(mappages(p->pagetable,va,PGSIZE,ka,PTE_W|PTE_R|PTE_U) != 0){
+          kfree((void*)ka);
+          p->killed = 1;
+        }
+      }
+    }else{
+      p->killed = 1;
+    }
+  }else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;

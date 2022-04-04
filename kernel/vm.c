@@ -5,7 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
-
+#include "spinlock.h" 
+#include "proc.h"
 /*
  * the kernel's page table.
  */
@@ -181,9 +182,14 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+      //panic("uvmunmap: walk");
+      //lab5.3
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      //panic("uvmunmap: not mapped");
+      //lab5.2如果出现unmap的情况,可能是通过lazy allocation申请的内存
+      //根本没用到,其对应的页表项的PTE_V还是0,那么这种情况可以直接不管,跳过
+      continue;
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -315,9 +321,14 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
+      //panic("uvmcopy: pte should exist");
+      //lab5.3
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      //lab5.3 PTE_V位为0,说明父进程这个页是由于lazy allocation,还没有分配,所以
+      //同样不给子进程分配即可
+      //panic("uvmcopy: page not present");
+      continue;
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -351,18 +362,45 @@ uvmclear(pagetable_t pagetable, uint64 va)
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
-int
-copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
+int copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
-  uint64 n, va0, pa0;
+  uint64 n, va0, pa0,va;
 
-  while(len > 0){
+  while (len > 0)
+  {
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
+    if (pa0 == 0)
+    {
+      printf("copyout\n");
+      // lab5.3 如果没有分配物理页,那么有可能是lazyallocation,检查并分配
+      if (dstva < myproc()->sz && dstva >= PGROUNDUP(myproc()->trapframe->sp))
+      {
+        //说明没有越界,只不过是lazy allocation的原因,没有实际的分配物理页
+        uint64 ka = (uint64)kalloc();
+        if (ka == 0)
+          return -1;
+        else
+        {
+          memset((void *)ka, 0, PGSIZE);
+          va = PGROUNDDOWN(va0);
+          if (mappages(myproc()->pagetable, va, PGSIZE, ka, PTE_W | PTE_R | PTE_U) != 0)
+          {
+            kfree((void *)ka);
+            return -1;
+          }
+        }
+        pa0 = walkaddr(pagetable, va0);
+      }
+      else
+      {
+        //超出了界限,应该return -1
+        return -1;
+      }
+    }
+
     n = PGSIZE - (dstva - va0);
-    if(n > len)
+    if (n > len)
       n = len;
     memmove((void *)(pa0 + (dstva - va0)), src, n);
 
@@ -384,8 +422,29 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
   while(len > 0){
     va0 = PGROUNDDOWN(srcva);
     pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
+    if(pa0 == 0){
+       // lab5.3 如果没有分配物理页,那么有可能是lazyallocation,检查并分配
+      if (srcva < myproc()->sz && srcva >= PGROUNDUP(myproc()->trapframe->sp))
+      {
+        //说明没有越界,只不过是lazy allocation的原因,没有实际的分配物理页
+        uint64 ka = (uint64)kalloc();
+        if (ka == 0)
+          return -1;
+        else
+        {
+          memset((void *)ka, 0, PGSIZE);
+          if (mappages(myproc()->pagetable, va0, PGSIZE, ka, PTE_W | PTE_R | PTE_U) != 0)
+          {
+            kfree((void *)ka);
+            return -1;
+          }
+        }
+        pa0 = walkaddr(pagetable, va0);
+      }
+      else
+        //超出了界限,应该return -1
+        return -1;
+    }
     n = PGSIZE - (srcva - va0);
     if(n > len)
       n = len;
