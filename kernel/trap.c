@@ -67,37 +67,55 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else if(r_scause() == 15){
+  } else if(r_scause() == 15 || r_scause() == 13){
+      //printf("into\n");
       //lab6 如果是store指令造成的trap,那么应该查看是不是访问到了共享页
       uint64 va = r_stval();    //va指向出错的地址
+      //printf("pid:%d,name:%s into:error because:%p,scaluse:%d\n",myproc()->pid,myproc()->name,va,r_scause());
+      //printf("before:\n");
+      //vmprint(p->pagetable);
       pte_t *pte;
       if((pte = walk(p->pagetable,va,0)) == 0|| !(*pte & PTE_V) || !(*pte & PTE_RSW1)){
         //如果根本就没有这个页,或者这个页的共享位为0,或者这个页的有效位为0,那么指令非法
+        printf("11111111111\n");
         p->killed = 1;
       }else{
+        //printf("addr:%p",pte);
         //如果当前页的引用实际上为1,那么不用创建新的页了,把当前页的w给打开就行了
         uint64 pa = PTE2PA(*pte);
         if(getref(pa) == 1){
           *pte =*pte & (~PTE_RSW1);    //这个页已经不是共享页了,而是本进程独享
-          *pte =*pte | (~PTE_W);       //本进程可以对这个页写了
+          *pte =*pte | (PTE_W);       //本进程可以对这个页写了
         }else{
           //分配一个新的页,然后让当前页表项映射到新的物理页上
           addref(pa,-1);      //老的pa的ref-1
           uint64 newpa = (uint64)kalloc();
           if(newpa == 0){
+            printf("222222222222222\n");
             p->killed = 1;
           }else{
-            if(mappages(p->pagetable,va,PGSIZE,newpa,PTE_W|PTE_U|PTE_R) != 0){
+            if(mappages(p->pagetable,PGROUNDDOWN(va),PGSIZE,newpa,PTE_W|PTE_U|PTE_R|PTE_X) != 0){
               kfree((void*)newpa);
+              printf("3333333333333333333333\n");
               p->killed = 1;
             }
             memmove((void*)newpa,(void*)pa,PGSIZE);
           }
         }
       }
+      //printf("\n\n\n\n\nafter:\n");
+      //vmprint(p->pagetable);
   } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+    //printf("in trap↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓\n");
+    //vmprint(p->pagetable);
+    //printf("in trap↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑\n");
+    //printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+    //printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+    printf("in trap↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓\n");
+    printf("pid:%d,name:%s,error because:%p,error no:%d,error pc:%p\n",myproc()->pid,myproc()->name, r_stval(),r_scause(),r_sepc());
+    vmprint(p->pagetable);
+    printf("%d\n",getref(2281058304u));
+    printf("trap↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑\n");
     p->killed = 1;
   }
 

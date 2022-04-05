@@ -334,7 +334,6 @@ sfence_vma()
 
 //lab6 RSW位
 #define PTE_RSW1 (1L << 8)   //如果该位为1,说明该页现在正在被共享
-#define PTE_RSW2 (1L << 9)
 
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)

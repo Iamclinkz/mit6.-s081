@@ -8,12 +8,13 @@
 #include "spinlock.h"
 #include "riscv.h"
 #include "defs.h"
+#include "proc.h"
 
 void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
-
+int enable = 0;
 struct run {
   struct run *next;
 };
@@ -24,12 +25,12 @@ struct {
 } kmem;
 
 //lab6 
-char kmemref[32730];
+char kmemref[PHYSTOP / PGSIZE];
 
 //getKmemrefIdx 把物理地址转换成kmemref的下标
 int getKmemrefIdx(uint64 kmemAddr)
 {
-  return (kmemAddr - (uint64)end) / PGSIZE;
+  return kmemAddr / PGSIZE;
 }
 
 int getref(uint64 kmemAddr)
@@ -45,9 +46,14 @@ int addref(uint64 kmemAddr,int num)
   if(kmemref[idx]<0){
     panic("kmemref should not be negative");
   }else{
+    if(enable){
+      //printf("add addr:%p,num:%d,now it is:%d\n",kmemAddr,num,kmemref[idx]);
+    }
     return kmemref[idx];
   }
 }
+
+
 
 void
 kinit()
@@ -56,6 +62,7 @@ kinit()
   freerange(end, (void*)PHYSTOP);
   //uint64 kend = (uint64)end;
   //printf("kend:%p,phystop:%p,sub:%p,num of pages:%d,rest:%d\n",kend,PHYSTOP,PHYSTOP-kend,(PHYSTOP-kend)/4096,(PHYSTOP-kend)%4096);
+  enable = 1;
 }
 
 void
@@ -63,8 +70,10 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE){
+    addref((uint64)p,1);
     kfree(p);
+  }
 }
 
 // Free the page of physical memory pointed at by v,
@@ -81,7 +90,7 @@ kfree(void *pa)
 
   //lab6 删除的时候减少引用计数,如果引用计数为0,才进行删除
   char ref = addref((uint64)pa,-1);
-  if(ref != 0)
+  if(ref > 0)
     return;
 
   // Fill with junk to catch dangling refs.
@@ -92,6 +101,9 @@ kfree(void *pa)
   acquire(&kmem.lock);
   r->next = kmem.freelist;
   kmem.freelist = r;
+  if(enable){
+    //printf("pid%d kfree:%p\n",myproc()->pid,r);
+  }
   release(&kmem.lock);
 }
 
@@ -105,8 +117,15 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  //printf("kalloc:%p\n",kmem.freelist);
+  // uint64 temp = 18374686481952755712u;
+  // if((uint64)kmem.freelist == temp){
+  //   vmprint((pagetable_t)getkernaltable());
+  // }
+
+  if(r){
     kmem.freelist = r->next;
+  }
   release(&kmem.lock);
 
   if(r)
@@ -114,7 +133,7 @@ kalloc(void)
   
   //lab6
   if(addref((uint64)r,1)!=1){
-    panic("kalloc:addref ret should be 1");
+    //panic("kalloc:addref ret should be 1");
   }
   return (void*)r;
 }

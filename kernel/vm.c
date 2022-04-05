@@ -5,7 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
-
+#include "spinlock.h"
+#include "proc.h"
 /*
  * the kernel's page table.
  */
@@ -15,6 +16,9 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+uint64 getkernaltable(){
+  return (uint64)&kernel_pagetable;
+}
 /*
  * create a direct-map page table for the kernel.
  */
@@ -156,8 +160,9 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   for(;;){
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
-    if(*pte & PTE_V)
-      panic("remap");
+    //lab6 有可能出现直接替换某个页表项映射的物理页的情况,所以取消这里的鉴定
+    // if(*pte & PTE_V)
+    //   panic("remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
@@ -324,6 +329,10 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     *pte = *pte & (~PTE_W);
     //将flags的第一个RSW位设为1,用于标记这是一个共享页,让出现页错误时诊断
     *pte = *pte | PTE_RSW1;   
+    if(!(*pte & PTE_U)){
+      //如果该页为陷阱页，那么不设共享页
+      *pte = *pte & (~PTE_RSW1);  
+    }
     flags = PTE_FLAGS(*pte);
     addref(pa,1);
     
@@ -370,13 +379,17 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);         //用户页的down
     pa0 = walkaddr(pagetable, va0);   //通过pagetable找到当前va0对应的物理地址
-    if(pa0 == 0)
+    if(pa0 == 0){
       //如果用户的逻辑地址不合法,那么return -1
+      printf("111111111111\n");
       return -1;
+    }
+
 
     //lab6 如果当前的物理地址同时被好几个ref引用,那么分配物理内存,从新映射页表
     pte_t* pte = walk(pagetable,va0,0); //取出页表项
     if(pte == 0 || !(*pte & PTE_V)){
+       printf("22222222222\n");
       return -1;
     }
     if(*pte & PTE_RSW1){
@@ -384,19 +397,24 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
       if(getref(pa0) == 1){
           //如果当前只有一个页表引用当前物理页,那么改变这个物理页对应的页表项
           *pte =*pte & (~PTE_RSW1);    //这个页已经不是共享页了,而是本进程独享
-          *pte =*pte | (~PTE_W);       //本进程可以对这个页写了
+          *pte =*pte | (PTE_W);       //本进程可以对这个页写了
         }else{
           //分配一个新的页,然后让当前页表项映射到新的物理页上
           addref(pa0,-1);      //老的pa的ref-1
           uint64 newpa = (uint64)kalloc();
           if(newpa == 0){
+            addref(pa0,1);
+             printf("33333333333333\n");
             return -1;
           }else{
-            if(mappages(pagetable,va0,PGSIZE,newpa,PTE_W|PTE_U|PTE_R) != 0){
+            if(mappages(pagetable,PGROUNDDOWN(va0),PGSIZE,newpa,PTE_W|PTE_U|PTE_R|PTE_X) != 0){
+              addref(pa0,1);
               kfree((void*)newpa);
+               printf("444444444444444444\n");
               return -1;
             }
             memmove((void*)newpa,(void *)pa0,PGSIZE);
+            pa0 = newpa;
           }
         }
     }
@@ -479,4 +497,90 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+void doVmPrint(pagetable_t pt, int layer)
+{
+  //对于给定的页表,遍历其0~511个页表项
+  for (int i = 0; i < 512; i++)
+  {
+    //取出页表项
+    pte_t pte = pt[i];
+    if (pte & PTE_V)
+    {
+      //如果该页表项正在使用
+      if (layer == 3)
+      {
+        char *prefix = ".. .. ..";
+        //如果到了叶子节点,不递归了,直接输出
+        printf("%s%d: pte %p pa %p\n", prefix, i, pte, PTE2PA(pte));
+        continue;
+      }
+      else
+      {
+        char *prefix;
+        //如果没有到叶子节点,应该递归一手
+        if (layer == 1)
+          prefix = "..";
+        else
+          prefix = ".. ..";
+
+        printf("%s%d: pte %p pa %p\n", prefix, i, pte, PTE2PA(pte));
+        //获取其存放的页表的物理地址,记为child
+        uint64 child = PTE2PA(pte);
+        doVmPrint((pagetable_t)child, layer + 1);
+      }
+    }
+  }
+}
+
+void vmprint(pagetable_t pt)
+{
+  printf("%s page table %p\n",myproc()->name, pt);
+  doVmPrint(pt, 1);
+}
+
+void doknPrint(pagetable_t pt, int layer)
+{
+  //对于给定的页表,遍历其0~511个页表项
+  for (int i = 0; i < 512; i++)
+  {
+    //取出页表项
+    pte_t pte = pt[i];
+    if (pte & PTE_V)
+    {
+      //如果该页表项正在使用
+      if (layer == 3)
+      {
+        char *prefix = ".. .. ..";
+        //如果到了叶子节点,不递归了,直接输出
+        printf("%s%d: pte %p pa %p\n", prefix, i, pte, PTE2PA(pte));
+        continue;
+      }
+      else
+      {
+        char *prefix;
+        //如果没有到叶子节点,应该递归一手
+        if (layer == 1){
+          if(i < 10){
+            continue;
+          }
+          prefix = "..";
+        }
+        else
+          prefix = ".. ..";
+
+        printf("%s%d: pte %p pa %p\n", prefix, i, pte, PTE2PA(pte));
+        //获取其存放的页表的物理地址,记为child
+        uint64 child = PTE2PA(pte);
+        doVmPrint((pagetable_t)child, layer + 1);
+      }
+    }
+  }
+}
+
+void knprint(pagetable_t pt)
+{
+  printf("%s page table %p\n",myproc()->name, pt);
+  doknPrint(pt, 1);
 }
