@@ -42,6 +42,9 @@
 struct spinlock uart_tx_lock;
 #define UART_TX_BUF_SIZE 32
 char uart_tx_buf[UART_TX_BUF_SIZE];
+//这里的设计是读指针追赶写指针,例如不考虑循环数组的情况下,一共有5个位置,当前读指针在idx = 2的位置
+//写指针在idx = 4的位置,说明接下来应该读取2,3位置上的内容用于输出,如果有输入,应该放在4的位置上.
+//即读指针追赶写指针的模型.从r指针到w指针中间的内容应该是要放到显示器上显示的内容.
 int uart_tx_w; // write next to uart_tx_buf[uart_tx_w++]
 int uart_tx_r; // read next from uart_tx_buf[uar_tx_r++]
 
@@ -86,7 +89,7 @@ uartinit(void)
 void
 uartputc(int c)
 {
-  acquire(&uart_tx_lock);
+  acquire(&uart_tx_lock);   //获取锁
 
   if(panicked){
     for(;;)
@@ -95,14 +98,16 @@ uartputc(int c)
 
   while(1){
     if(((uart_tx_w + 1) % UART_TX_BUF_SIZE) == uart_tx_r){
+      //循环链表,如果写指针追上了读指针(位于读指针的上一个位置),那么说明当前buf满了
+      //那么我们需要将uart_tx_lock释放掉,然后等待uart_tx_r的移动
       // buffer is full.
       // wait for uartstart() to open up space in the buffer.
       sleep(&uart_tx_r, &uart_tx_lock);
     } else {
-      uart_tx_buf[uart_tx_w] = c;
-      uart_tx_w = (uart_tx_w + 1) % UART_TX_BUF_SIZE;
-      uartstart();
-      release(&uart_tx_lock);
+      uart_tx_buf[uart_tx_w] = c;       //把c放到uart_tx_w的位置上
+      uart_tx_w = (uart_tx_w + 1) % UART_TX_BUF_SIZE;   //循环链表移动一下写指针
+      uartstart();      //start一手uart
+      release(&uart_tx_lock);   //放锁
       return;
     }
   }
@@ -140,23 +145,31 @@ uartstart()
   while(1){
     if(uart_tx_w == uart_tx_r){
       // transmit buffer is empty.
+      //如果写指针==读指针,那么当前队列是空的,那么直接返回
       return;
     }
     
     if((ReadReg(LSR) & LSR_TX_IDLE) == 0){
+      //LSR_TX_IDLE == 1 说明当前THR不是满的,可以发送.如果THR是满的,直接return即可
       // the UART transmit holding register is full,
       // so we cannot give it another byte.
       // it will interrupt when it's ready for a new byte.
       return;
     }
     
+    //取出内容,然后改变读指针,然后发送
     int c = uart_tx_buf[uart_tx_r];
     uart_tx_r = (uart_tx_r + 1) % UART_TX_BUF_SIZE;
     
     // maybe uartputc() is waiting for space in the buffer.
     wakeup(&uart_tx_r);
     
-    WriteReg(THR, c);
+    //THR(Transmit Holding Register)是用于存放数据的,可以实际发送的FIFO,大概为32bits?可以写.
+    //这里加锁可以保证同时只能有一个进程写这个寄存器.同时可以见上面几行的英文注释,如果LSR_TX_IDLE从0变成1,
+    //那么会产生中断,这样比如我们cpu0当前在这个位置执行完WriteReg(THR, c);然后还有要读的内容,然后进行下一轮while
+    //循环,再次走到第二个if,这时产生了一个中断,如果不加锁,那么uart的中断处理函数和我们这个函数会同时更改r指针,从而可能出错.
+    //所以hold一下uart_tx_lock是必须的.
+    WriteReg(THR, c);   
   }
 }
 
@@ -180,6 +193,7 @@ void
 uartintr(void)
 {
   // read and process incoming characters.
+  //如果是RBR(aka RHR)满产生的,说明收到了新的内容,应该从RBR中读取输入,然后从控制台显示
   while(1){
     int c = uartgetc();
     if(c == -1)
@@ -188,6 +202,7 @@ uartintr(void)
   }
 
   // send buffered characters.
+  //看看是不是因为THR空产生的,如果是的话应该及时把buf中的内容进行发送.注意这里要加锁,隔绝uartputc()
   acquire(&uart_tx_lock);
   uartstart();
   release(&uart_tx_lock);

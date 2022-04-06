@@ -70,6 +70,9 @@ kalloc(void)
 {
   struct run *r;
 
+  //这里如果不加锁在多核race的情况下可能出现物理页丢失的错误.
+  //里如果cpu0和cpu1同时执行了r = kmem.freelist;这句,然后执行kmem.freelist = r->next;先执行的那个cpu所
+  //释放的物理内存块将会永久的丢失.可以画图试试
   acquire(&kmem.lock);
   r = kmem.freelist;
   if(r)

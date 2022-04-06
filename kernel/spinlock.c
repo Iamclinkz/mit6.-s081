@@ -61,8 +61,13 @@ initlock(struct spinlock *lk, char *name)
 void
 acquire(struct spinlock *lk)
 {
+  //这里关闭中断主要是为了防止例如在同一个cpu上运行的进程ab的如下场景:
+  //a进入到这里,不设置中断,然后获取了本锁
+  //因为时钟中断等原因,a获取了锁之后切换到进程b,然后b因为要执行一些临界区操作,所以把中断关了,包括时钟中断
+  //然后b同时希望获取本锁,然后会卡在test and set这里,而且把时钟中断关了,所以也没法切换到进程a然后放锁.造成死锁
   push_off(); // disable interrupts to avoid deadlock.
   if(holding(lk))
+  //如果自己已经hold了这个锁,再申请一次的话百分百死锁,所以检测一手
     panic("acquire");
 
 #ifdef LAB_LOCK
@@ -74,6 +79,10 @@ acquire(struct spinlock *lk)
   //   s1 = &lk->locked
   //   amoswap.w.aq a5, a5, (s1)
   while(__sync_lock_test_and_set(&lk->locked, 1) != 0) {
+    //这里实际上是使用了rv提供的test and set指令amoswap,结合c的while循环,一直test and set锁所在的地址,每次执行如下几个步骤:
+    //1.将地址中的内容拷贝到a中
+    //2.将1赋值给该地址
+    //3.将a返回
 #ifdef LAB_LOCK
     __sync_fetch_and_add(&(lk->nts), 1);
 #else
@@ -85,6 +94,10 @@ acquire(struct spinlock *lk)
   // past this point, to ensure that the critical section's memory
   // references happen strictly after the lock is acquired.
   // On RISC-V, this emits a fence instruction.
+  //大概就是通知编译器在编译的时候严格的按照顺序执行,而不要因为优化改变指令执行的顺序,这样可以保证
+  //临界区的内容可以被顺序的执行,而不是例如释放了锁之后再执行一部分临界区中的代码
+  //大概意思就是在  __sync_synchronize(); 这里画一条线(fence),所有在其之前的load/store指令都不能放到它之后执行
+  //注意放锁的代码里也有这样一条界限,这样就可以保证临界区的代码肯定被获取锁和释放锁正好的夹住
   __sync_synchronize();
 
   // Record info about lock acquisition for holding() and debugging.
@@ -96,6 +109,7 @@ void
 release(struct spinlock *lk)
 {
   if(!holding(lk))
+  //如果本进程没有hold这个锁,而想要放锁的话会panic
     panic("release");
 
   lk->cpu = 0;
@@ -115,6 +129,9 @@ release(struct spinlock *lk)
   // On RISC-V, sync_lock_release turns into an atomic swap:
   //   s1 = &lk->locked
   //   amoswap.w zero, zero, (s1)
+  //不可以直接store一个0到锁的地址上,store指令并不是原子性指令
+  //如果同时有很多个cpu可能对同一个地址store的话,那么可能会出现未知错误.所以还是使用rv提供的
+  //保证原子性的指令,例如amoswap来实现向锁的位置写值的操作
   __sync_lock_release(&lk->locked);
 
   pop_off();
