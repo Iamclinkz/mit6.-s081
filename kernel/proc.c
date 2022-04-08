@@ -123,8 +123,11 @@ found:
 
   // Set up new context to start executing at forkret,
   // which returns to user space.
+  //当进程被创建出来的时候,应该初始化其内核线程的上下文,也就是context的内容
+  //然后我们在创建完这个进程之后,执行 np->state = RUNNABLE;  release(&np->lock);这两句之后,
+  //进程可以被cpu核所调度,然后即可从调度器线程切换到p对应的内核线程中,然后即可实现线程的切换
   memset(&p->context, 0, sizeof(p->context));
-  p->context.ra = (uint64)forkret;
+  p->context.ra = (uint64)forkret;      //这里只设置了ra和sp的值,作为进程的内核线程的应该开始执行的地方以及内核堆栈的地址
   p->context.sp = p->kstack + PGSIZE;
 
   return p;
@@ -222,6 +225,8 @@ userinit(void)
   p->sz = PGSIZE;
 
   // prepare for the very first "return" from kernel to user.
+  //这里是唯一一个手动设置epc为0,这样从trap ret之后开始执行从0开始的指令.
+  //其他epc要不就是exec中的将entry设定为epc,要不就是使用fork时复制父进程的epc
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
 
@@ -453,6 +458,7 @@ wait(uint64 addr)
 //  - swtch to start running that process.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
+// 每个cpu加载之后都会执行本函数,本函数是由一个永远不返回的调度器线程执行的代码
 void
 scheduler(void)
 {
@@ -476,12 +482,18 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        //执行swtch.S中的swtch函数之后,cpu中的寄存器被切换到p的context了,
+        //也就是切换到了p的proc.c中的sched()的mycpu()->intena = intena;这句代码之前
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
-        c->proc = 0;
+        //代码执行到这里,p已经运行结束了,如果是从定时器中断来的,那么轨迹为:
+        //从用户态某条指令(收到定时器中断)->usertrap->yield->sched->swtch.S->此处
+        c->proc = 0;    //当前cpu不运行任何指令
       }
+      //释放的是yield中加的锁,现在我们把p的内核线程的context保存到了p->context中,并且堆栈也从p的内核堆栈切换到调度器堆栈了
+      //所以现在其他cpu核可以对p进行调度,运行p了
       release(&p->lock);
     }
     if(nproc <= 2) {   // only init and sh exist
@@ -504,6 +516,7 @@ sched(void)
   int intena;
   struct proc *p = myproc();
 
+  //做各种检查,如果当前程序不合法,则触发panic
   if(!holding(&p->lock))
     panic("sched p->lock");
   if(mycpu()->noff != 1)
@@ -514,7 +527,10 @@ sched(void)
     panic("sched interruptible");
 
   intena = mycpu()->intena;
+  //这里调用了汇编语言写的swtch函数,并且第一个参数传入p->context的地址,用于保存本进程内核上下文
+  //第二个参数传入了当前cpu核的context地址,即调度器线程的上下文
   swtch(&p->context, &mycpu()->context);
+  //代码执行到这里,已经切换了一次线程,又切换回来了
   mycpu()->intena = intena;
 }
 
@@ -523,8 +539,10 @@ void
 yield(void)
 {
   struct proc *p = myproc();
+  //获取本进程的锁,如果不加锁,在改变了进程的状态后,例如变成runnable,但是还没有退出本进程的中断处理程序
+  //的时候,其他cpu核心将会运行这个进程,从而导致错误
   acquire(&p->lock);
-  p->state = RUNNABLE;
+  p->state = RUNNABLE;    //调整进程状态
   sched();
   release(&p->lock);
 }

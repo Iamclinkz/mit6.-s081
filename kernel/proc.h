@@ -1,4 +1,5 @@
 // Saved registers for kernel context switches.
+// 可以见swtch.S
 struct context {
   uint64 ra;
   uint64 sp;
@@ -21,7 +22,7 @@ struct context {
 // Per-CPU state.
 struct cpu {
   struct proc *proc;          // The process running on this cpu, or null.
-  struct context context;     // swtch() here to enter scheduler().
+  struct context context;     // swtch() here to enter scheduler().  每个cpu核的scheduler线程将其context对象保存在这里
   int noff;                   // Depth of push_off() nesting.
   int intena;                 // Were interrupts enabled before push_off()?
 };
@@ -84,10 +85,10 @@ enum procstate { UNUSED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
 // Per-process state
 struct proc {
-  struct spinlock lock;
+  struct spinlock lock;   //可以用于保存state字段,比如不让某个进程被多核同时检测到RUNABLE,然后同时调度
 
   // p->lock must be held when using these:
-  enum procstate state;        // Process state
+  enum procstate state;        // Process state   RUNNING,RUNABLE等
   struct proc *parent;         // Parent process
   void *chan;                  // If non-zero, sleeping on chan
   int killed;                  // If non-zero, have been killed
@@ -99,7 +100,7 @@ struct proc {
   uint64 sz;                   // Size of process memory (bytes)
   pagetable_t pagetable;       // User page table
   struct trapframe *trapframe; // data page for trampoline.S
-  struct context context;      // swtch() here to run process
+  struct context context;      // swtch() here to run process 每个进程的内核线程的上下文被保存在这里
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)

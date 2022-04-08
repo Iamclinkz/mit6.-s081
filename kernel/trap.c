@@ -68,6 +68,7 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
+    //如果产生的中断是不可以被识别的(devintr()会返回是什么中断,返回0表示没有识别),杀死本进程并报错
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
@@ -78,6 +79,7 @@ usertrap(void)
 
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)
+  //如果本次是timer发过来的中断,那么yield()
     yield();
 
   usertrapret();
@@ -180,6 +182,7 @@ devintr()
 
   if((scause & 0x8000000000000000L) &&
      (scause & 0xff) == 9){
+       //这里可以看scause在trap之后的值,首先判断是否为中断(interrupt位为1),然后再判断是否是外设中断(exception code字段为8)
     // this is a supervisor external interrupt, via PLIC.
 
     // irq indicates which device interrupted.
@@ -203,6 +206,7 @@ devintr()
   } else if(scause == 0x8000000000000001L){
     // software interrupt from a machine-mode timer interrupt,
     // forwarded by timervec in kernelvec.S.
+    //如果当前的中断是外设中断
 
     if(cpuid() == 0){
       clockintr();
