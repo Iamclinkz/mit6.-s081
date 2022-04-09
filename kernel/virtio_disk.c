@@ -200,6 +200,7 @@ alloc3_desc(int *idx)
   return 0;
 }
 
+//直接驱动磁盘,传入某个buf,读/写这个buf对应的dev的block
 void
 virtio_disk_rw(struct buf *b, int write)
 {
