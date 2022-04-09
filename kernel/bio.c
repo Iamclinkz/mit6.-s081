@@ -22,78 +22,72 @@
 #include "defs.h"
 #include "fs.h"
 #include "buf.h"
+#define BucketNum 13
 
-struct {
+struct{
   struct spinlock lock;
   struct buf buf[NBUF];
+}bcache[BucketNum];
 
-  // Linked list of all buffers, through prev/next.
-  // Sorted by how recently the buffer was used.
-  // head.next is most recent, head.prev is least.
-  //相当于head节点,创建一个空节点,让这个节点作为头结点.所有对缓冲区的访问都是经过head,而不是直接访问buf列表
-  struct buf head;
-} bcache;
 
+//初始化bcachehash
 void
 binit(void)
 {
-  struct buf *b;
-
-  initlock(&bcache.lock, "bcache");   //初始化bcache中的lock
-
-  // Create linked list of buffers
-  bcache.head.prev = &bcache.head;    //初始化头结点
-  bcache.head.next = &bcache.head;
-  for(b = bcache.buf; b < bcache.buf+NBUF; b++){
-    //依次把bcache中的buf数组中的buf中的锁进行初始化,然后链接到双向链表中
-    b->next = bcache.head.next;
-    b->prev = &bcache.head;
-    initsleeplock(&b->lock, "buffer");
-    bcache.head.next->prev = b;
-    bcache.head.next = b;
+  int i,j;
+  for(i = 0;i!=BucketNum;i++){
+    //初始化bcache的锁
+    initlock(&bcache[i].lock, "bcache");
+    for(j = 0;j!=NBUF;j++)
+      initsleeplock(&bcache[i].buf[j].lock, "bcache");
   }
 }
 
-// Look through buffer cache for block on device dev.
-// If not found, allocate a buffer.
-// In either case, return locked buffer.
-//通过设备号(dev)和block号(注意block是操作系统能感知的磁盘的最小单元,每一个为1024B,而扇区(sector)是
-//磁盘能够感知的最小单元,每个大小为512B)
+int getbucketid(uint dev,uint blockno){
+  return (dev + blockno) % BucketNum;
+}
+
 static struct buf*
 bget(uint dev, uint blockno)
 {
   struct buf *b;
 
-  acquire(&bcache.lock);
+  int bid = getbucketid(dev,blockno);
+  acquire(&bcache[bid].lock);
 
   // Is the block already cached?
   //首先从cache中找这个块
-  for(b = bcache.head.next; b != &bcache.head; b = b->next){
+  for(b = bcache[bid].buf; b != bcache[bid].buf + NBUF; b++){
     if(b->dev == dev && b->blockno == blockno){
-      //如果从buf中找到了
+      //如果从buf中找到了,直接返回
       b->refcnt++;
-      release(&bcache.lock);
+      release(&bcache[bid].lock);
       acquiresleep(&b->lock); //注意return b之前需要先等待该块被释放
       return b;
     }
   }
 
-  // Not cached.
-  // Recycle the least recently used (LRU) unused buffer.
-  //如果从cache中没有找到这个dev的这个block,那么应该从cache中拿一个当前没有被使用的块,然后分配给申请者
-  for(b = bcache.head.prev; b != &bcache.head; b = b->prev){
+  //如果没找到,应该分配一手
+  uint mintik = -1; //mintik设置为最大
+  struct buf *dog = 0;  //应该被淘汰的块
+  for(b = bcache[bid].buf; b != bcache[bid].buf + NBUF; b++){
     if(b->refcnt == 0) {
-      //从后往前(根据lru)找一个当前没有被使用的cache块
-      b->dev = dev;
-      b->blockno = blockno;
-      b->valid = 0;   //这里的valid暂时设置成0,然后让上层从磁盘中读取一手,这样可以避免使用上次cache中的内容
-      b->refcnt = 1;
-      release(&bcache.lock);
-      acquiresleep(&b->lock);
-      return b;
+      if(mintik > b->tks){
+        dog = b;
+        mintik = b->tks;
+      }
     }
   }
-  panic("bget: no buffers");
+  if(mintik == -1)
+    panic("bget: no buffers");
+  
+  dog->dev = dev;
+  dog->blockno = blockno;
+  dog->valid = 0;   //这里的valid暂时设置成0,然后让上层从磁盘中读取一手,这样可以避免使用上次cache中的内容
+  dog->refcnt = 1;
+  release(&bcache[bid].lock);
+  acquiresleep(&dog->lock);
+  return dog;
 }
 
 // Return a locked buf with the contents of the indicated block.
@@ -131,33 +125,24 @@ brelse(struct buf *b)
 
   releasesleep(&b->lock);
 
-  acquire(&bcache.lock);
+  b->tks = ticks;
   b->refcnt--;
-  if (b->refcnt == 0) {
-    // no one is waiting for it.
-    b->next->prev = b->prev;
-    b->prev->next = b->next;
-    b->next = bcache.head.next;
-    b->prev = &bcache.head;
-    bcache.head.next->prev = b;
-    bcache.head.next = b;
-  }
-  
-  release(&bcache.lock);
 }
 
 void
 bpin(struct buf *b) {
-  acquire(&bcache.lock);
+  uint bid = getbucketid(b->dev,b->blockno);
+  acquire(&bcache[bid].lock);
   b->refcnt++;
-  release(&bcache.lock);
+  release(&bcache[bid].lock);
 }
 
 void
 bunpin(struct buf *b) {
-  acquire(&bcache.lock);
+  uint bid = getbucketid(b->dev,b->blockno);
+  acquire(&bcache[bid].lock);
   b->refcnt--;
-  release(&bcache.lock);
+  release(&bcache[bid].lock);
 }
 
 
