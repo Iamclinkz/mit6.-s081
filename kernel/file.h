@@ -29,7 +29,7 @@ struct inode {
   uint size;          //文件数据有多少个字节
   //0-11保存的是direct block number,也就是直接索引,第12块指向的是一个块存放了256个直接索引的块,即保存的是间接索引
   //所以xv6中的文件的最大尺寸是(256+12)*1024字节
-  uint addrs[NDIRECT+1];
+  uint addrs[NDIRECT+2];
 };
 
 // map major device number to device functions.

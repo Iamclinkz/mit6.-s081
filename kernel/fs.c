@@ -382,19 +382,23 @@ iunlockput(struct inode *ip)
 
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
+//返回ip指向的inode对应的文件的第n个block的地址,如果第n个block暂时还没有分配,那么分配一个
 static uint
 bmap(struct inode *ip, uint bn)
 {
   uint addr, *a;
-  struct buf *bp;
+  struct buf *bp,*bp2;
 
   if(bn < NDIRECT){
+    //如果文件的块大小小于NDIRECT
     if((addr = ip->addrs[bn]) == 0)
+      //如果bn块没有分配,那么分配一手
       ip->addrs[bn] = addr = balloc(ip->dev);
     return addr;
   }
   bn -= NDIRECT;
 
+  //接下来看一层间接索引块
   if(bn < NINDIRECT){
     // Load indirect block, allocating if necessary.
     if((addr = ip->addrs[NDIRECT]) == 0)
@@ -409,6 +413,31 @@ bmap(struct inode *ip, uint bn)
     return addr;
   }
 
+  bn -= NINDIRECT;
+  if(bn < NININDIRECT){
+    // 加载第12个块,即二级索引块.如果没有的话,分配一手
+    if((addr = ip->addrs[NDIRECT+1]) == 0)
+      ip->addrs[NDIRECT+1] = addr = balloc(ip->dev);    //addr指向二级索引块
+    
+    bp = bread(ip->dev, addr);  //加载第12个块到bp
+    a = (uint*)bp->data;        //a作为第12个块的数组指针
+    if((addr = a[bn / NINDIRECT]) == 0){
+      //如果一级索引块没有,那么分配一手,并且让addr指向一级索引块
+      a[bn / NINDIRECT] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+    brelse(bp);
+    
+    bp2 = bread(ip->dev, addr);  
+    a = (uint*)bp2->data;        
+    if((addr = a[bn % NINDIRECT]) == 0){
+      //如果一级索引块没有,那么分配一手,并且让addr指向一级索引块
+      a[bn % NINDIRECT] = addr = balloc(ip->dev);
+      log_write(bp2);
+    }
+    brelse(bp2);
+    return addr;
+  }
   panic("bmap: out of range");
 }
 
@@ -417,9 +446,9 @@ bmap(struct inode *ip, uint bn)
 void
 itrunc(struct inode *ip)
 {
-  int i, j;
-  struct buf *bp;
-  uint *a;
+  int i, j, k;
+  struct buf *bp,*bp2;
+  uint *a,*a1;
 
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
@@ -438,6 +467,28 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  //释放二级索引块
+  if(ip->addrs[NDIRECT+1]){
+    bp = bread(ip->dev, ip->addrs[NDIRECT+1]);
+    a = (uint*)bp->data;
+    for(j = 0; j < NINDIRECT; j++){
+      if(a[j]){
+        //如果一级索引块有内容
+        bp2 = bread(ip->dev, a[j]);
+        a1 = (uint*)bp2->data;
+        for(k = 0; k < NINDIRECT; k++){
+           if(a1[k])
+            bfree(ip->dev, a1[k]);
+        }
+        brelse(bp2);
+      }
+      bfree(ip->dev, a[j]);
+    }
+    brelse(bp);
+    bfree(ip->dev, ip->addrs[NDIRECT+1]);
+    ip->addrs[NDIRECT+1] = 0;
   }
 
   ip->size = 0;
