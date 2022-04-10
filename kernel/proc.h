@@ -103,4 +103,8 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  
+  char slt;                    // 软链接迭代次数(除了这里不知道还能放在哪里了= =)
+  char path[MAXPATH];
+  int  inlink;
 };

@@ -289,17 +289,75 @@ create(char *path, short type, short major, short minor)
 }
 
 uint64
+sys_symlink(void)
+{
+  char target[MAXPATH];
+  char path[MAXPATH];
+  struct inode *ip;
+  //struct buf *bp;
+  int targetlen;
+  //解析参数,链接目标文件路径存放到target中,链接文件路径放到path中
+  if( (targetlen = argstr(0, target, MAXPATH)) < 0 || (targetlen = argstr(1, path, MAXPATH)) < 0)
+    return -1;
+
+  begin_op();
+
+  //创建一个链接文件,好像获取的ip是加锁的,所以不用再加锁了
+  if((ip = create(path, T_SYMLINK, 0, 0)) == 0){
+    //如果创建失败,返回一手-1
+    end_op();
+    return -1;
+  }
+  
+  //给链接文件分配一个数据块,用于存放路径(本来想自己写的..结果发现有api)
+  // if((ip->addrs[0] = balloc(ip->dev)) == 0){
+  //   iunlockput(ip);
+  //   end_op();
+  //   return -1;
+  // }
+
+  //将target写入这个块
+  //bp = bread(ip->dev, ip->addrs[0]);
+  //memmove((char*)bp,path,targetlen);
+  //log_write(bp);
+  //brelse(bp);
+  //ip->size = n;
+  if((writei(ip, 0, (uint64)target, 0, targetlen)) == -1){
+    panic("sys_symlink:wrong api use");
+    return -1;
+  }
+  iunlockput(ip);
+  end_op();
+
+  return 0;
+}
+
+uint64
 sys_open(void)
 {
-  char path[MAXPATH];
+  char* path = myproc()->path;
   int fd, omode;
   struct file *f;
   struct inode *ip;
   int n;
 
-  //解析参数,第一个参数存放了路径指针,第二个参数存放了标志位
-  if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
+  if(myproc()->inlink == 1){
+    //如果当前是在soft link的迭代中,那么从myproc中取出path
+    if(myproc()->slt >= 10){
+      //soft link可能死循环了
+      return -1;
+    }
+  }else{
+    //解析参数,第一个参数存放了路径指针,第二个参数存放了标志位
+    if((n = argstr(0, path, MAXPATH)) < 0){
+      return -1;
+    }
+  }
+
+  if(argint(1, &omode) < 0){
     return -1;
+  }
+  
 
   begin_op();
 
@@ -312,10 +370,31 @@ sys_open(void)
     }
   } else {
     if((ip = namei(path)) == 0){
+      //通过path,读取inode.如果失败直接return.
       end_op();
       return -1;
     }
-    ilock(ip);
+
+    ilock(ip);    //如果读取成功,加锁
+    if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)){
+      //如果目标文件是软连接文件,并且没有指定nofollow
+      myproc()->inlink = 1;
+      if((n = readi(ip, 0, (uint64)path,0,ip->size)) == 0){
+        //如果啥都没读出来,失败
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }else{
+        //递归调用sys_read
+        iunlockput(ip);
+        end_op();
+        myproc()->slt++;
+        int res = sys_open();
+        myproc()->inlink = 0;
+        myproc()->slt = 0;
+        return res;
+      }
+    }
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
@@ -324,11 +403,13 @@ sys_open(void)
   }
 
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
+    //如果是设备文件
     iunlockput(ip);
     end_op();
     return -1;
   }
 
+  //分配一个文件,以及一个本进程的文件描述符
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
       fileclose(f);
