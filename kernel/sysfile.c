@@ -244,12 +244,16 @@ create(char *path, short type, short major, short minor)
   struct inode *ip, *dp;
   char name[DIRSIZ];
 
+  //这里通过解析path,将待创建文件的名称放到name中,并且把待创建文件所在的目录的
+  //inode返回,如果父目录的inode不存在,则报错(因为父目录至少是根目录)
   if((dp = nameiparent(path, name)) == 0)
     return 0;
 
   ilock(dp);
 
   if((ip = dirlookup(dp, name, 0)) != 0){
+    //通过dirlookup拿到(如果有的话)待创建文件的inode,检查是否已经存在
+    //如果存在返回其inode,否则(例如带创建的文件的父目录中已经有同名的文件夹)返回0
     iunlockput(dp);
     ilock(ip);
     if(type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
@@ -258,6 +262,7 @@ create(char *path, short type, short major, short minor)
     return 0;
   }
 
+  //检查完毕,开始执行创建inode的过程
   if((ip = ialloc(dp->dev, type)) == 0)
     panic("create: ialloc");
 
@@ -292,13 +297,15 @@ sys_open(void)
   struct inode *ip;
   int n;
 
+  //解析参数,第一个参数存放了路径指针,第二个参数存放了标志位
   if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
     return -1;
 
   begin_op();
 
   if(omode & O_CREATE){
-    ip = create(path, T_FILE, 0, 0);
+    //如果路径中指定了需要创建文件,那么创建一手
+    ip = create(path, T_FILE, 0, 0);    
     if(ip == 0){
       end_op();
       return -1;

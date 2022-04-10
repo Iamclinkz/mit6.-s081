@@ -6,9 +6,7 @@
 #define BSIZE 1024  // block size
 
 // Disk layout:
-// [ boot block | super block | log | inode blocks |
-//                                          free bit map | data blocks]
-//
+// [ boot block | super block | log | inode blocks | free bit map | data blocks]
 // mkfs computes the super block and builds an initial file system. The
 // super block describes the disk layout:
 struct superblock {
@@ -42,7 +40,7 @@ struct dinode {
 #define IPB           (BSIZE / sizeof(struct dinode))
 
 // Block containing inode i
-#define IBLOCK(i, sb)     ((i) / IPB + sb.inodestart)
+#define IBLOCK(i, sb)     ((i) / IPB + sb.inodestart)   //用于计算编号为i的inode对应的block号
 
 // Bitmap bits per block
 #define BPB           (BSIZE*8)
@@ -53,8 +51,9 @@ struct dinode {
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14
 
+//是目录文件中实际存放的数据结构,每个dirent表示一个该目录文件的子文件
 struct dirent {
-  ushort inum;
-  char name[DIRSIZ];
+  ushort inum;        //该子文件的inode号
+  char name[DIRSIZ];  //该子文件的名称
 };
 

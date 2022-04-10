@@ -23,7 +23,7 @@
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 // there should be one superblock per disk device, but we run with
-// only one device
+// only one device 超级块中存放了本文件系统的参数等内容
 struct superblock sb; 
 
 // Read the super block.
@@ -200,9 +200,13 @@ ialloc(uint dev, short type)
   struct dinode *dip;
 
   for(inum = 1; inum < sb.ninodes; inum++){
-    bp = bread(dev, IBLOCK(inum, sb));
+    //通过调用bread这个api,在block cache这一层实现了进程的对block的互斥访问
+    //这样可以保证如果有进程在某个block上创建/更新了inode,那么接下来的进程将会可见.
+    bp = bread(dev, IBLOCK(inum, sb));          //获取磁盘编号为dev,inode编号为inum所在的的block(并且加锁)
+    //inum%IPB表示本inode是所在block上的第几个inode,使用bp->data加一手,也就得到了inode在内存中所在的位置
     dip = (struct dinode*)bp->data + inum%IPB;
     if(dip->type == 0){  // a free inode
+      //如果当前的编号为inum的inode是个free的inode,那么直接给它赋值,然后使用iget返回inode指针
       memset(dip, 0, sizeof(*dip));
       dip->type = type;
       log_write(bp);   // mark it allocated on the disk
@@ -328,7 +332,11 @@ iunlock(struct inode *ip)
 // If that was the last reference and the inode has no links
 // to it, free the inode (and its content) on disk.
 // All calls to iput() must be inside a transaction in
-// case it has to free the inode.
+// case it has to free the inode
+//中文翻译:
+//解除对内存中inode的引用。如果这是最后一次引用，inode缓存项可以被回收了.
+//如果这是最后一次引用，而inode没有指向它的链接，在磁盘上释放inode（及其内容）。
+//对iput（）的所有调用都必须在事务内部，以防必须释放inode。
 void
 iput(struct inode *ip)
 {
@@ -631,13 +639,17 @@ namex(char *path, int nameiparent, char *name)
   struct inode *ip, *next;
 
   if(*path == '/')
+  //如果path以'/'开头,那么ip指向根文件夹的inode
     ip = iget(ROOTDEV, ROOTINO);
   else
+  //否则ip指向当前文件夹的inode
     ip = idup(myproc()->cwd);
 
+  //递归的解析目录,如果path是0,说明当前的name已经指向了最下面一层的文件的名称,那么结束while
   while((path = skipelem(path, name)) != 0){
-    ilock(ip);
+    ilock(ip);                //lock一下当前的目录的inode
     if(ip->type != T_DIR){
+      //如果当前不是目录文件,那么说明到头了,解锁当前文件的inode返回0
       iunlockput(ip);
       return 0;
     }
